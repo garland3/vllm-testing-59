@@ -1,0 +1,103 @@
+# Example systemd unit to run the vLLM OpenAI-compatible API on boot
+# Copy (and edit if needed) to one of these locations:
+#   System-wide (root):   /etc/systemd/system/vllm.service
+#   Rootless (user):      ~/.config/systemd/user/vllm.service
+# For rootless, also enable lingering so user services start at boot:
+#   sudo loginctl enable-linger <your-username>
+# Then:
+#   systemctl daemon-reload            (system-wide) OR systemctl --user daemon-reload (rootless)
+#   systemctl enable --now vllm        (or: systemctl --user enable --now vllm)
+# Logs: journalctl -u vllm -f          (or: journalctl --user -u vllm -f)
+#
+# Adjust GPU device, model, tensor parallel size, and port as needed.
+# If you want to restrict exposure to a specific interface, replace -p 8000:8000 with -p 192.168.1.10:8000:8000
+
+[Unit]
+Description=vLLM OpenAI-compatible API (Podman)
+After=network-online.target
+Wants=network-online.target
+# If NVIDIA services exist, uncomment the next line for safer ordering:
+# After=nvidia-persistenced.service
+
+[Service]
+# Rootless-friendly minimal configuration (reduced hardening to avoid 'cannot clone').
+# You can reintroduce hardening gradually after it works.
+
+# Environment configuration
+Environment=IMAGE=docker.io/vllm/vllm-openai:latest
+Environment=MODEL=Qwen/Qwen3-8B
+Environment=PORT=8000
+
+# Export typical runtime vars for rootless Podman in user systemd
+Environment=PODMAN_SYSTEMD_UNIT=1
+Environment=XDG_RUNTIME_DIR=%t
+
+# Where to store a persistent cache/model weights (optional). Create directory and add -v flag below if desired.
+# Environment=MODEL_CACHE=/var/lib/vllm-cache
+
+# Always pull latest version of the tag on start (remove if you want immutability)
+ExecStartPre=/usr/bin/podman pull ${IMAGE}
+# Clean up any stale container name from previous crashes/reboots (ignore errors with leading -)
+ExecStartPre=-/usr/bin/podman rm -f vllm
+# Ensure rootless podman internal state (pause process, cgroups) is migrated/reset (helps with 'cannot clone')
+ExecStartPre=/usr/bin/podman system migrate
+
+# Main container
+ExecStart=/usr/bin/podman run \
+  --name vllm \
+  --rm \
+  -v /mnt/data/huggingface:/root/.cache/huggingface/hub \
+  --device nvidia.com/gpu=all \
+  --ipc=host \
+  -p ${PORT}:8000 \
+  ${IMAGE} --model ${MODEL} --enable-auto-tool-choice --tool-call-parser hermes --gpu_memory_utilization 0.95
+
+# Graceful stop: send SIGTERM, then force after timeout
+ExecStop=/usr/bin/podman stop -t 45 vllm
+ExecStopPost=-/usr/bin/podman rm -f vllm
+
+# Auto-restart on failure or unexpected exit
+Restart=always
+RestartSec=10
+Delegate=yes
+
+# Increase start timeout if model init is heavy
+TimeoutStartSec=900
+
+# Journald logging
+StandardOutput=journal
+StandardError=journal
+
+# (Hardening directives removed temporarily for rootless stability)
+# Consider re-adding one at a time:
+#   NoNewPrivileges=yes
+#   PrivateTmp=yes
+#   ProtectSystem=full (or readonly + ReadWritePaths=...)
+#   ProtectHome=yes
+# After it works reliably without 'cannot clone'.
+
+# Give Podman full control over its cgroups & processes
+KillMode=process
+
+[Install]
+# NOTE:
+#   * System-wide (root) install should use: WantedBy=multi-user.target
+#   * Rootless (user) install must use:      WantedBy=default.target
+# Since you're running this rootless, we set default.target here.
+# If you copy this to /etc/systemd/system as root, change back to multi-user.target.
+WantedBy=default.target
+
+# -------- Rootless Notes --------
+# For rootless usage:
+# 1. DO NOT put this file in /etc/systemd/system. Instead use: ~/.config/systemd/user/vllm.service
+# 2. Make sure your user can access the NVIDIA devices (may require nvidia-container-runtime + cgroup settings).
+# 3. Replace /usr/bin/podman with the path from: which podman
+# 4. Enable lingering: sudo loginctl enable-linger $(whoami)
+# 5. Use systemctl --user commands instead of systemctl (omit sudo)
+
+# -------- Firewall (example) --------
+# Firewalld: sudo firewall-cmd --permanent --add-port=8000/tcp && sudo firewall-cmd --reload
+# UFW:       sudo ufw allow 8000/tcp
+
+# -------- Health Check (optional) --------
+# You can add ExecStartPost=/usr/bin/bash -c 'for i in {1..60}; do curl -fsS http://127.0.0.1:8000/v1/models && exit 0; sleep 2; done; exit 1'
