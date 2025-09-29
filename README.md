@@ -4,12 +4,15 @@
 * Switched to Qwen3-8B and it worked right away, but not able to get podman working as a service yet.
 * Playing with the Qwen2.5-VL-7B-Instruct vision model now.
 
+```
 huggingface-cli download Qwen/Qwen3-8B
-# vllm serve Qwen/Qwen3-8B \
-#   --enable-auto-tool-choice \
-#   --tool-call-parser hermes
+vllm serve Qwen/Qwen3-8B \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes
+```
 
 
+```
 podman run -v /mnt/data/huggingface:/root/.cache/huggingface/hub \
   --rm --device nvidia.com/gpu=all \
   -p 8000:8000 --ipc=host \
@@ -18,6 +21,7 @@ podman run -v /mnt/data/huggingface:/root/.cache/huggingface/hub \
   --enable-auto-tool-choice \
   --tool-call-parser hermes \
   --gpu_memory_utilization 0.95
+```
 
 
 # 
@@ -29,9 +33,12 @@ podman run -v /mnt/data/huggingface:/root/.cache/huggingface/hub \
 
 # or try the vision model. 
 
+```
 huggingface-cli download Qwen/Qwen2.5-VL-7B-Instruct
+```
 
 
+```
 podman run -v /mnt/data/huggingface:/root/.cache/huggingface/hub \
   --rm --device nvidia.com/gpu=all \
   -p 8000:8000 --ipc=host \
@@ -41,3 +48,4 @@ podman run -v /mnt/data/huggingface:/root/.cache/huggingface/hub \
   --enable-auto-tool-choice \
   --tool-call-parser hermes \
   --max-model-len 50000
+```
